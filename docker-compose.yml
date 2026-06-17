@@ -1,0 +1,48 @@
+services:
+
+  # ── Docker-in-Docker daemon ──────────────────────────────────────────────────
+  # Runs a full Docker daemon inside a container.
+  # --privileged is required: the daemon needs kernel capabilities to create
+  # cgroups, namespaces, and overlay mounts for the containers it manages.
+  # TLS is disabled (DOCKER_TLS_CERTDIR="") so the daemon listens on plain
+  # TCP port 2375 — acceptable because this port is only reachable inside
+  # the jenkins-net bridge network, never exposed to the host.
+  dind:
+    image: docker:27-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""        # disable TLS → plain TCP on 2375
+    volumes:
+      - dind-storage:/var/lib/docker  # persist image cache across restarts
+    ports:
+      - "4566:4566"    # expose LocalStack to Mac localhost
+    networks:
+      - jenkins-net
+    restart: unless-stopped
+
+  # ── Jenkins controller ───────────────────────────────────────────────────────
+  # Built from the local Dockerfile which adds Python, Node, and Docker CLI.
+  # DOCKER_HOST tells every `docker` command in the pipeline to talk to the
+  # dind daemon over TCP instead of a local socket.
+  jenkins:
+    build: .
+    environment:
+      DOCKER_HOST: tcp://dind:2375   # all docker CLI calls go to dind
+    volumes:
+      - jenkins-home:/var/jenkins_home
+    ports:
+      - "8080:8080"    # Jenkins web UI
+      - "50000:50000"  # agent inbound port (for future remote agents)
+    networks:
+      - jenkins-net
+    depends_on:
+      - dind
+    restart: unless-stopped
+
+networks:
+  jenkins-net:
+    driver: bridge
+
+volumes:
+  jenkins-home:
+  dind-storage:
